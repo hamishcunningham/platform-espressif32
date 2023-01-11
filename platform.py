@@ -88,14 +88,25 @@ class Espressif32Platform(PlatformBase):
                         sys.exit(1)
 
         if "espidf" in frameworks:
-            if "arduino" in frameworks:
-                self.packages["framework-arduinoespressif32"]["version"] = "~3.20003.0"
             # Common packages for IDF and mixed Arduino+IDF projects
             for p in self.packages:
-                if p in ("tool-cmake", "tool-ninja", "toolchain-%sulp" % mcu):
+                if p in ("tool-cmake", "tool-ninja", "toolchain-esp32ulp"):
                     self.packages[p]["optional"] = False
                 elif p in ("tool-mconf", "tool-idf") and IS_WINDOWS:
                     self.packages[p]["optional"] = False
+
+            if "arduino" in frameworks:
+                # Downgrade the IDF version for mixed Arduino+IDF projects
+                self.packages["framework-espidf"]["version"] = "~3.40403.0"
+            else:
+                # Use the latest toolchains available for IDF v5.0
+                for target in (
+                    "xtensa-esp32",
+                    "xtensa-esp32s2",
+                    "xtensa-esp32s3",
+                    "riscv32-esp"
+                ):
+                    self.packages["toolchain-%s" % target]["version"] = "11.2.0+2022r1"
 
         for available_mcu in ("esp32", "esp32s2", "esp32s3"):
             if available_mcu == mcu:
@@ -104,9 +115,6 @@ class Espressif32Platform(PlatformBase):
                 self.packages.pop("toolchain-xtensa-%s" % available_mcu, None)
 
         if mcu in ("esp32s2", "esp32s3", "esp32c3"):
-            self.packages.pop("toolchain-esp32ulp", None)
-            if mcu != "esp32s2":
-                self.packages.pop("toolchain-esp32s2ulp", None)
             # RISC-V based toolchain for ESP32C3, ESP32S2, ESP32S3 ULP
             self.packages["toolchain-riscv32-esp"]["optional"] = False
 
@@ -249,7 +257,7 @@ class Espressif32Platform(PlatformBase):
 
         if "openocd" in (debug_config.server or {}).get("executable", ""):
             debug_config.server["arguments"].extend(
-                ["-c", "adapter_khz %s" % (debug_config.speed or "5000")]
+                ["-c", "adapter speed %s" % (debug_config.speed or "5000")]
             )
 
         ignore_conds = [
@@ -261,23 +269,16 @@ class Espressif32Platform(PlatformBase):
         if any(ignore_conds):
             return
 
-        merged_firmware = build_extra_data.get("merged_firmware", False)
-        load_cmds = []
-        if not merged_firmware:
-            load_cmds.extend([
-                'monitor program_esp "{{{path}}}" {offset} verify'.format(
-                    path=to_unix_path(item["path"]), offset=item["offset"]
-                )
-                for item in flash_images
-            ])
-
+        load_cmds = [
+            'monitor program_esp "{{{path}}}" {offset} verify'.format(
+                path=to_unix_path(item["path"]), offset=item["offset"]
+            )
+            for item in flash_images
+        ]
         load_cmds.append(
             'monitor program_esp "{%s.bin}" %s verify'
             % (
-                to_unix_path(
-                    debug_config.build_data["prog_path"][:-4]
-                    + ("_merged" if merged_firmware else "")
-                ),
+                to_unix_path(debug_config.build_data["prog_path"][:-4]),
                 build_extra_data.get("application_offset", "0x10000"),
             )
         )
